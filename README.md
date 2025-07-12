@@ -25,4 +25,5 @@
 ## 🚀 快速开始
 
 pip install fastapi "uvicorn[standard]" httpx pydantic python-dotenv
+
 python main.py
