@@ -1,4 +1,4 @@
-# main.py (v1.0.3 - With Sponsor Adblock)
+# main.py (v1.0.4 - With Sponsor Adblock)
 
 import os
 import httpx
@@ -28,7 +28,7 @@ class OpenAIChatRequest(BaseModel):
 app = FastAPI(
     title="Pollinations OpenAI-Compatible Proxy",
     description="一个将 OpenAI API 请求转发到 Pollinations 服务的代理，并内置广告过滤。",
-    version="1.0.3"
+    version="1.0.4"
 )
 
 # --- 关键的 Headers ---
@@ -56,8 +56,8 @@ async def stream_proxy(request_body: dict):
     一个异步生成器，用于请求目标API并流式返回响应内容。
     内置了对 "Sponsor" 关键词的检测和过滤。
     """
-    async with httpx.AsyncClient() as client:
-        try:
+    try:
+        async with httpx.AsyncClient() as client:
             async with client.stream(
                 "POST",
                 TARGET_URL,
@@ -65,45 +65,48 @@ async def stream_proxy(request_body: dict):
                 headers=POLLINATIONS_HEADERS,
                 timeout=120.0
             ) as response:
-                response.raise_for_status()
-                
+                # 手动检查状态码，而不是使用 raise_for_status()
+                if response.status_code >= 400:
+                    # 读取错误响应体
+                    error_content = await response.aread()
+                    try:
+                        details = error_content.decode('utf-8')
+                    except UnicodeDecodeError:
+                        details = "Error response could not be decoded."
+                    
+                    error_details = {
+                        "error": {
+                            "message": f"Upstream API error: {response.status_code}",
+                            "type": "upstream_error",
+                            "details": details
+                        }
+                    }
+                    error_message = f"data: {json.dumps(error_details)}\n\n"
+                    yield error_message.encode('utf-8')
+                    print(f"Error from upstream API: {response.status_code} - {details}")
+                    return # 结束生成器
+
                 # =================== 广告过滤逻辑开始 ===================
                 async for chunk in response.aiter_bytes():
-                    # 将二进制块解码为字符串以便检查内容，使用 errors='ignore' 避免解码错误
                     chunk_str = chunk.decode('utf-8', errors='ignore')
-
-                    # 检查解码后的字符串是否包含 "Sponsor" 关键词
                     if "Sponsor" in chunk_str:
                         print("Sponsor content detected. Stopping the stream to the client.")
-                        # 发现广告，立即中断循环，不再向客户端发送任何数据
                         break
-                    
-                    # 如果没有广告，将原始的二进制块转发给客户端
                     yield chunk
                 # =================== 广告过滤逻辑结束 ===================
 
-        except httpx.HTTPStatusError as e:
-            response_content = await e.response.aread()
-            try:
-                details = response_content.decode('utf-8')
-            except UnicodeDecodeError:
-                details = "Error response could not be decoded."
-
-            error_details = {
-                "error": {
-                    "message": f"Upstream API error: {e.response.status_code}",
-                    "type": "upstream_error",
-                    "details": details
-                }
-            }
-            error_message = f"data: {json.dumps(error_details)}\n\n"
-            yield error_message.encode('utf-8')
-            print(f"Error from upstream API: {e.response.status_code} - {details}")
-        except Exception as e:
-            error_details = {"error": {"message": f"An unexpected error occurred: {str(e)}", "type": "proxy_error"}}
-            error_message = f"data: {json.dumps(error_details)}\n\n"
-            yield error_message.encode('utf-8')
-            print(f"An unexpected error occurred: {e}")
+    except httpx.RequestError as e:
+        # 处理请求级别的错误，例如网络问题
+        error_details = {"error": {"message": f"Request to upstream failed: {str(e)}", "type": "request_error"}}
+        error_message = f"data: {json.dumps(error_details)}\n\n"
+        yield error_message.encode('utf-8')
+        print(f"An httpx.RequestError occurred: {e}")
+    except Exception as e:
+        # 处理其他意外错误
+        error_details = {"error": {"message": f"An unexpected error occurred: {str(e)}", "type": "proxy_error"}}
+        error_message = f"data: {json.dumps(error_details)}\n\n"
+        yield error_message.encode('utf-8')
+        print(f"An unexpected error occurred: {e}")
 
 # --- FastAPI 路由 ---
 @app.post("/v1/chat/completions")
