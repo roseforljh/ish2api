@@ -1,4 +1,4 @@
-# main.py (v1.0.2 - With Sponsor Adblock)
+# main.py (v1.0.3 - With Sponsor Adblock)
 
 import os
 import httpx
@@ -28,7 +28,7 @@ class OpenAIChatRequest(BaseModel):
 app = FastAPI(
     title="Pollinations OpenAI-Compatible Proxy",
     description="一个将 OpenAI API 请求转发到 Pollinations 服务的代理，并内置广告过滤。",
-    version="1.0.2"
+    version="1.0.3"
 )
 
 # --- 关键的 Headers ---
@@ -83,17 +83,22 @@ async def stream_proxy(request_body: dict):
                 # =================== 广告过滤逻辑结束 ===================
 
         except httpx.HTTPStatusError as e:
-            await e.response.aread()
+            response_content = await e.response.aread()
+            try:
+                details = response_content.decode('utf-8')
+            except UnicodeDecodeError:
+                details = "Error response could not be decoded."
+
             error_details = {
                 "error": {
                     "message": f"Upstream API error: {e.response.status_code}",
                     "type": "upstream_error",
-                    "details": e.response.text
+                    "details": details
                 }
             }
             error_message = f"data: {json.dumps(error_details)}\n\n"
             yield error_message.encode('utf-8')
-            print(f"Error from upstream API: {e.response.status_code} - {e.response.text}")
+            print(f"Error from upstream API: {e.response.status_code} - {details}")
         except Exception as e:
             error_details = {"error": {"message": f"An unexpected error occurred: {str(e)}", "type": "proxy_error"}}
             error_message = f"data: {json.dumps(error_details)}\n\n"
