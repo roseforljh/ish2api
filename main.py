@@ -1,5 +1,5 @@
-# main.py (v12.0.0 - The Final Parameter Fix)
-print("--- LOADING PROXY SERVER V12.0.0 (FINAL PARAMETER FIX) ---")
+# main.py (v13.0.0 - The Final Replication)
+print("--- LOADING PROXY SERVER V13.0.0 (FINAL REPLICATION) ---")
 
 import os
 import httpx
@@ -31,12 +31,11 @@ class OpenAIChatRequest(BaseModel):
 app = FastAPI(
     title="Multi-Provider OpenAI-Compatible Proxy",
     description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js完全模拟适配器。",
-    version="12.0.0"
+    version="13.0.0"
 )
 
 # --- 提供商配置 ---
 PROVIDER_URLS = {
-    "pollinations": "https://text.pollinations.ai/openai",
     "puter": "https://api.puter.com/drivers/call",
 }
 PROVIDER_KEYS = {
@@ -64,10 +63,13 @@ async def stream_proxy(provider: str, request_body: dict):
     # --- Puter.js 完全模拟适配器 ---
     if provider == "puter":
         # 1. 准备 Puter.js 特定的请求体
+        # 核心修复：在 args 内部也复制顶层参数
         puter_args = request_body.copy()
         puter_args["test_mode"] = False
+        puter_args["driver"] = "openrouter"
+        puter_args["interface"] = "puter-chat-completion"
+        puter_args["method"] = "complete"
         
-        # 修正了 'driver' 的值为 'openrouter'
         final_request_body = {
             "interface": "puter-chat-completion",
             "driver": "openrouter",
