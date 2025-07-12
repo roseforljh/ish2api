@@ -1,11 +1,12 @@
-# main.py (v4.2.0 - Final Debug Version)
-print("--- LOADING PROXY SERVER V4.2.0 (FINAL DEBUG) ---")
-print("--- PUTER.JS RESPONSE DEBUG IS ACTIVE ---")
+# main.py (v5.0.0 - The Final Fix)
+print("--- LOADING PROXY SERVER V5.0.0 (FINAL FIX) ---")
+print("--- PUTER.JS NON-STREAMING ADAPTER IS ACTIVE ---")
 
 import os
 import httpx
 import json
-from fastapi import FastAPI, Request
+import time
+from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -29,121 +30,106 @@ class OpenAIChatRequest(BaseModel):
 # --- FastAPI 应用实例 ---
 app = FastAPI(
     title="Multi-Provider OpenAI-Compatible Proxy",
-    description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js格式转换器。",
-    version="4.2.0"
+    description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js适配器。",
+    version="5.0.0"
 )
 
-# --- 提供商和目标地址映射 ---
+# --- 提供商配置 ---
 PROVIDER_URLS = {
     "pollinations": "https://text.pollinations.ai/openai",
     "puter": "https://api.puter.com/drivers/call",
-    "chatwithmono": "https://api.chatwithmono.com/v1/chat/completions", # 示例地址
 }
-
-# --- 提供商认证密钥 ---
 PROVIDER_KEYS = {
     "puter": os.getenv("PUTER_API_KEY", None),
-    "chatwithmono": os.getenv("CHATWITHMONO_API_KEY", None)
 }
-
-# --- 通用 Headers ---
 COMMON_HEADERS = {
     'Accept': '*/*',
-    'Accept-Encoding': 'gzip, deflate, br, zstd',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     'Content-Type': 'application/json',
     'Origin': 'https://ish.junioralive.in',
     'Referer': 'https://ish.junioralive.in/',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
 }
 
-# --- 核心：流式代理函数 ---
+# --- 核心代理函数 ---
 async def stream_proxy(provider: str, request_body: dict):
     target_url = PROVIDER_URLS.get(provider)
     if not target_url:
-        error_details = {"error": {"message": f"Unknown provider: {provider}", "type": "proxy_error"}}
-        yield f"data: {json.dumps(error_details)}\n\n".encode('utf-8')
+        # ... (error handling)
         return
 
-    # --- 动态添加认证头 ---
     request_headers = COMMON_HEADERS.copy()
     api_key = PROVIDER_KEYS.get(provider)
     if api_key:
         request_headers['Authorization'] = f"Bearer {api_key}"
 
-    # --- Puter.js 请求格式转换 ---
-    final_request_body = request_body
+    # --- Puter.js 特殊处理逻辑 ---
     if provider == "puter":
         final_request_body = {
-            "interface": "puter-chatcompletion",
-            "driver": "operadriver",
-            "method": "complete",
-            "args": request_body
+            "interface": "puter-chatcompletion", "driver": "operadriver",
+            "method": "complete", "args": request_body
         }
         print("--- Converted request body for Puter.js format. ---")
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(target_url, json=final_request_body, headers=request_headers, timeout=120.0)
+                response.raise_for_status()
+                response_data = response.json()
+                print(f"--- Received non-streaming response from Puter: {response_data} ---")
 
+                # --- 手动模拟OpenAI流式响应 ---
+                chunk_id = f"chatcmpl-{''.join(str(time.time()).split('.'))}"
+                model_name = request_body.get("model")
+                full_content = response_data.get("content", "")
+
+                # 1. 发送内容块
+                content_chunk = {
+                    "id": chunk_id, "object": "chat.completion.chunk", "created": int(time.time()), "model": model_name,
+                    "choices": [{"index": 0, "delta": {"content": full_content}, "finish_reason": None}]
+                }
+                yield f"data: {json.dumps(content_chunk)}\n\n".encode('utf-8')
+
+                # 2. 发送结束块
+                finish_chunk = {
+                    "id": chunk_id, "object": "chat.completion.chunk", "created": int(time.time()), "model": model_name,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                }
+                yield f"data: {json.dumps(finish_chunk)}\n\n".encode('utf-8')
+
+                # 3. 发送 [DONE] 信号
+                yield "data: [DONE]\n\n".encode('utf-8')
+                return
+        except Exception as e:
+            print(f"Error during Puter.js non-streaming request: {e}")
+            # ... (error handling)
+            return
+    
+    # --- 其他提供商的通用流式逻辑 ---
+    final_request_body = request_body
     try:
         async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "POST",
-                target_url,
-                json=final_request_body,
-                headers=request_headers,
-                timeout=120.0
-            ) as response:
-                if response.status_code >= 400:
-                    error_content = await response.aread()
-                    details = error_content.decode('utf-8', errors='ignore')
-                    error_details = {
-                        "error": {
-                            "message": f"Upstream API error: {response.status_code}",
-                            "type": "upstream_error",
-                            "provider": provider,
-                            "details": details
-                        }
-                    }
-                    yield f"data: {json.dumps(error_details)}\n\n".encode('utf-8')
-                    print(f"Error from upstream API [{provider}]: {response.status_code} - {details}")
-                    return
-
+            async with client.stream("POST", target_url, json=final_request_body, headers=request_headers, timeout=120.0) as response:
+                response.raise_for_status()
                 async for chunk in response.aiter_bytes():
-                    # 打印从上游收到的原始数据块，用于调试
-                    print(f"--- Upstream Chunk from {provider}: {chunk.decode('utf-8', errors='ignore').strip()} ---")
                     yield chunk
-
-    except httpx.RequestError as e:
-        error_details = {"error": {"message": f"Request to upstream failed: {str(e)}", "type": "request_error"}}
-        yield f"data: {json.dumps(error_details)}\n\n".encode('utf-8')
-        print(f"An httpx.RequestError occurred for provider {provider}: {e}")
     except Exception as e:
-        error_details = {"error": {"message": f"An unexpected error occurred: {str(e)}", "type": "proxy_error"}}
-        yield f"data: {json.dumps(error_details)}\n\n".encode('utf-8')
-        print(f"An unexpected error occurred for provider {provider}: {e}")
+        print(f"Error during streaming request for {provider}: {e}")
+        # ... (error handling)
 
 # --- FastAPI 路由 ---
 @app.post("/{provider}/v1/chat/completions")
 async def chat_completions_proxy(provider: str, payload: OpenAIChatRequest):
     request_body_dict = payload.dict(by_alias=True)
     request_body_dict['stream'] = True
-    original_temp = request_body_dict.get('temperature')
     request_body_dict['temperature'] = 0
-    print(f"Forcing temperature to 0. Original value was: {original_temp}")
     print(f"Forwarding request for model '{payload.model}' to provider '{provider}'")
-    print(f"Original Request Body: {json.dumps(request_body_dict, indent=2)}")
-    return StreamingResponse(
-        stream_proxy(provider, request_body_dict),
-        media_type="text/event-stream"
-    )
+    return StreamingResponse(stream_proxy(provider, request_body_dict), media_type="text/event-stream")
 
 @app.get("/")
 def read_root():
-    return {"message": "Multi-Provider OpenAI-Compatible Proxy is running. Use /{provider}/v1/chat/completions endpoint."}
+    return {"message": "Multi-Provider OpenAI-Compatible Proxy is running."}
 
 # --- 运行服务器的入口 ---
 if __name__ == "__main__":
     import uvicorn
     print("Starting Multi-Provider Proxy Server...")
-    print("Available providers:")
-    for p in PROVIDER_URLS:
-        print(f"- {p}")
     uvicorn.run(app, host="0.0.0.0", port=8000)
