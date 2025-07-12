@@ -1,6 +1,6 @@
-# main.py (v4.1.0 - Debug Version)
-print("--- LOADING PROXY SERVER V4.1.0 (DEBUG VERSION) ---")
-print("--- FORMAT ADAPTER FOR PUTER.JS IS ACTIVE ---")
+# main.py (v4.2.0 - Final Debug Version)
+print("--- LOADING PROXY SERVER V4.2.0 (FINAL DEBUG) ---")
+print("--- PUTER.JS RESPONSE DEBUG IS ACTIVE ---")
 
 import os
 import httpx
@@ -30,7 +30,7 @@ class OpenAIChatRequest(BaseModel):
 app = FastAPI(
     title="Multi-Provider OpenAI-Compatible Proxy",
     description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js格式转换器。",
-    version="4.1.0"
+    version="4.2.0"
 )
 
 # --- 提供商和目标地址映射 ---
@@ -74,7 +74,6 @@ async def stream_proxy(provider: str, request_body: dict):
     # --- Puter.js 请求格式转换 ---
     final_request_body = request_body
     if provider == "puter":
-        # 将标准OpenAI请求体转换为Puter.js的特殊格式
         final_request_body = {
             "interface": "puter-chatcompletion",
             "driver": "operadriver",
@@ -108,6 +107,8 @@ async def stream_proxy(provider: str, request_body: dict):
                     return
 
                 async for chunk in response.aiter_bytes():
+                    # 打印从上游收到的原始数据块，用于调试
+                    print(f"--- Upstream Chunk from {provider}: {chunk.decode('utf-8', errors='ignore').strip()} ---")
                     yield chunk
 
     except httpx.RequestError as e:
@@ -123,18 +124,12 @@ async def stream_proxy(provider: str, request_body: dict):
 @app.post("/{provider}/v1/chat/completions")
 async def chat_completions_proxy(provider: str, payload: OpenAIChatRequest):
     request_body_dict = payload.dict(by_alias=True)
-    
-    # 强制 stream 为 true
     request_body_dict['stream'] = True
-    
-    # 强制 temperature 为 0
     original_temp = request_body_dict.get('temperature')
     request_body_dict['temperature'] = 0
     print(f"Forcing temperature to 0. Original value was: {original_temp}")
-
     print(f"Forwarding request for model '{payload.model}' to provider '{provider}'")
     print(f"Original Request Body: {json.dumps(request_body_dict, indent=2)}")
-    
     return StreamingResponse(
         stream_proxy(provider, request_body_dict),
         media_type="text/event-stream"
