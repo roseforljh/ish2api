@@ -39,6 +39,13 @@ PROVIDER_URLS = {
     "puter": "https://api.puter.com/drivers/call",
 }
 
+# --- 提供商认证密钥 ---
+# 将 'YOUR_PROVIDER_KEY_HERE' 替换为真实的 API Key
+PROVIDER_KEYS = {
+    "puter": os.getenv("PUTER_API_KEY", "YOUR_PROVIDER_KEY_HERE"),
+    "chatwithmono": os.getenv("CHATWITHMONO_API_KEY", None) # 如果不需要key，可以设为None
+}
+
 # --- 通用 Headers ---
 # 注意：不同的提供商可能需要不同的 Headers，这里简化为通用版
 COMMON_HEADERS = {
@@ -64,11 +71,18 @@ async def stream_proxy(provider: str, request_body: dict):
 
     try:
         async with httpx.AsyncClient() as client:
+            # --- 动态添加认证头 ---
+            request_headers = COMMON_HEADERS.copy()
+            api_key = PROVIDER_KEYS.get(provider)
+            if api_key:
+                request_headers['Authorization'] = f"Bearer {api_key}"
+            # --- 认证头逻辑结束 ---
+
             async with client.stream(
                 "POST",
                 target_url,
                 json=request_body,
-                headers=COMMON_HEADERS,
+                headers=request_headers,
                 timeout=120.0
             ) as response:
                 if response.status_code >= 400:
