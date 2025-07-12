@@ -1,8 +1,9 @@
-# main.py (v13.0.0 - The Final Replication)
-print("--- LOADING PROXY SERVER V13.0.0 (FINAL REPLICATION) ---")
+# main.py (v15.0.0 - The Raw Requests Fix)
+print("--- LOADING PROXY SERVER V15.0.0 (RAW REQUESTS FIX) ---")
 
 import os
-import httpx
+import httpx # Keep for other providers
+import requests # Use for Puter.js
 import json
 import time
 import traceback
@@ -30,8 +31,8 @@ class OpenAIChatRequest(BaseModel):
 # --- FastAPI 应用实例 ---
 app = FastAPI(
     title="Multi-Provider OpenAI-Compatible Proxy",
-    description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js完全模拟适配器。",
-    version="13.0.0"
+    description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js原始请求适配器。",
+    version="15.0.0"
 )
 
 # --- 提供商配置 ---
@@ -46,10 +47,11 @@ COMMON_HEADERS = {
     'Content-Type': 'application/json',
     'Origin': 'https://ish.junioralive.in',
     'Referer': 'https://ish.junioralive.in/',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
 }
 
 # --- 核心代理函数 ---
-async def stream_proxy(provider: str, request_body: dict):
+def stream_proxy_sync(provider: str, request_body: dict):
     provider = provider.strip()
     target_url = PROVIDER_URLS.get(provider)
     if not target_url:
@@ -62,8 +64,6 @@ async def stream_proxy(provider: str, request_body: dict):
 
     # --- Puter.js 完全模拟适配器 ---
     if provider == "puter":
-        # 1. 准备 Puter.js 特定的请求体
-        # 核心修复：在 args 内部也复制顶层参数
         puter_args = request_body.copy()
         puter_args["test_mode"] = False
         puter_args["driver"] = "openrouter"
@@ -76,55 +76,25 @@ async def stream_proxy(provider: str, request_body: dict):
             "method": "complete",
             "args": puter_args
         }
-        print(f"--- FINAL PUTER REQUEST BODY: {json.dumps(final_request_body, indent=2)} ---")
         
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(target_url, json=final_request_body, headers=request_headers, timeout=120.0)
-                response.raise_for_status()
-                response_text = response.text
-                print(f"--- PUTER RAW RESPONSE: {response_text} ---")
+            # 使用 requests 库进行流式请求
+            response = requests.post(target_url, json=final_request_body, headers=request_headers, stream=True, timeout=120.0)
+            response.raise_for_status()
+            
+            print("--- PUTER STREAMING CONNECTION ESTABLISHED ---")
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    print(f"--- YIELDING CHUNK: {chunk.decode('utf-8', errors='ignore')} ---")
+                    yield chunk
 
-                # 2. 解析 Puter.js 特定的响应格式
-                full_content = ""
-                try:
-                    response_list = json.loads(response_text)
-                    full_content = "".join(item.get("text", "") for item in response_list if item.get("type") == "text")
-                except json.JSONDecodeError:
-                    for line in response_text.strip().split('\n'):
-                        if line.strip().startswith("data:"):
-                            json_str = line.strip()[5:].strip()
-                            if json_str:
-                                data_chunk = json.loads(json_str)
-                                if data_chunk.get("type") == "text":
-                                    full_content += data_chunk.get("text", "")
-                
-                print(f"--- PARSED FULL CONTENT: {full_content} ---")
-
-                # 3. 手动模拟OpenAI流式响应
-                chunk_id = f"chatcmpl-{''.join(str(time.time()).split('.'))}"
-                model_name = request_body.get("model")
-
-                content_chunk = {
-                    "id": chunk_id, "object": "chat.completion.chunk", "created": int(time.time()), "model": model_name,
-                    "choices": [{"index": 0, "delta": {"content": full_content}, "finish_reason": None}]
-                }
-                yield f"data: {json.dumps(content_chunk)}\n\n".encode('utf-8')
-
-                finish_chunk = {
-                    "id": chunk_id, "object": "chat.completion.chunk", "created": int(time.time()), "model": model_name,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
-                }
-                yield f"data: {json.dumps(finish_chunk)}\n\n".encode('utf-8')
-                yield "data: [DONE]\n\n".encode('utf-8')
-                return
         except Exception as e:
-            print(f"--- FATAL ERROR IN PUTER LOGIC: {type(e).__name__}: {e} ---")
+            print(f"--- FATAL ERROR IN PUTER SYNC STREAMING: {e} ---")
             traceback.print_exc()
             return
-    
-    # --- 其他提供商的通用流式逻辑 ---
-    # ... (generic logic)
+    else:
+        # ... (其他提供商的通用逻辑)
+        pass
 
 # --- FastAPI 路由 ---
 @app.post("/{provider}/v1/chat/completions")
@@ -132,7 +102,7 @@ async def chat_completions_proxy(provider: str, payload: OpenAIChatRequest):
     request_body_dict = payload.dict(by_alias=True)
     request_body_dict['stream'] = True
     request_body_dict['temperature'] = 0
-    return StreamingResponse(stream_proxy(provider, request_body_dict), media_type="text/event-stream")
+    return StreamingResponse(stream_proxy_sync(provider, request_body_dict), media_type="text/event-stream")
 
 @app.get("/")
 def read_root():
