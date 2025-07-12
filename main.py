@@ -114,6 +114,8 @@ async def chat_completions_proxy(payload: OpenAIChatRequest):
     request_body_dict = payload.dict(by_alias=True)
     request_body_dict['stream'] = True
     print(f"Forwarding request for model '{payload.model}' to {TARGET_URL}")
+    # 增加日志，打印完整的请求体
+    print(f"Request Body Sent to Upstream: {json.dumps(request_body_dict, indent=2)}")
     return StreamingResponse(
         stream_proxy(request_body_dict),
         media_type="text/event-stream"
