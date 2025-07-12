@@ -1,6 +1,5 @@
-# main.py (v8.0.0 - The Real Grand Finale)
-print("--- LOADING PROXY SERVER V8.0.0 (REAL GRAND FINALE) ---")
-print("--- PUTER.JS RAW STRING PARSER IS ACTIVE ---")
+# main.py (v9.0.0 - The Final Final Fix)
+print("--- LOADING PROXY SERVER V9.0.0 (FINAL FIX) ---")
 
 import os
 import httpx
@@ -32,11 +31,12 @@ class OpenAIChatRequest(BaseModel):
 app = FastAPI(
     title="Multi-Provider OpenAI-Compatible Proxy",
     description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js适配器。",
-    version="8.0.0"
+    version="9.0.0"
 )
 
 # --- 提供商配置 ---
 PROVIDER_URLS = {
+    "pollinations": "https://text.pollinations.ai/openai",
     "puter": "https://api.puter.com/drivers/call",
 }
 PROVIDER_KEYS = {
@@ -63,12 +63,18 @@ async def stream_proxy(provider: str, request_body: dict):
 
     # --- Puter.js 特殊处理逻辑 ---
     if provider == "puter":
+        print("--- PUTER LOGIC ACTIVATED ---")
         puter_args = request_body.copy()
         puter_args["test_mode"] = False
+        
+        # 修正了 'interface' 和 'driver' 的值
         final_request_body = {
-            "interface": "puter-chatcompletion", "driver": "operadriver",
-            "method": "complete", "args": puter_args
+            "interface": "puter-chat-completion",
+            "driver": "openrouter",
+            "method": "complete",
+            "args": puter_args
         }
+        print(f"--- FINAL PUTER REQUEST BODY: {json.dumps(final_request_body, indent=2)} ---")
         
         try:
             async with httpx.AsyncClient() as client:
@@ -77,20 +83,27 @@ async def stream_proxy(provider: str, request_body: dict):
                 response_text = response.text
                 print(f"--- PUTER RAW RESPONSE: {response_text} ---")
 
-                # --- 终极解析逻辑：手动处理事件流字符串 ---
                 full_content = ""
-                for line in response_text.strip().split('\n'):
-                    line = line.strip()
-                    if line.startswith("data:"):
-                        try:
-                            json_str = line[5:].strip()
-                            if json_str:
-                                data_chunk = json.loads(json_str)
-                                if data_chunk.get("type") == "text":
-                                    full_content += data_chunk.get("text", "")
-                        except json.JSONDecodeError:
-                            print(f"Could not decode JSON from line: {line}")
-                            continue
+                # 修正：Puter的响应可能不是一个标准的JSON数组，而是多个JSON对象拼接的字符串
+                # 我们需要找到一种更健壮的方式来解析它
+                try:
+                    # 尝试解析为JSON数组
+                    response_list = json.loads(response_text)
+                    full_content = "".join(item.get("text", "") for item in response_list if item.get("type") == "text")
+                except json.JSONDecodeError:
+                    # 如果失败，尝试按行解析
+                    print("--- JSON Array parsing failed, trying line-by-line parsing... ---")
+                    for line in response_text.strip().split('\n'):
+                        line = line.strip()
+                        if line.startswith("data:"):
+                            try:
+                                json_str = line[5:].strip()
+                                if json_str:
+                                    data_chunk = json.loads(json_str)
+                                    if data_chunk.get("type") == "text":
+                                        full_content += data_chunk.get("text", "")
+                            except json.JSONDecodeError:
+                                continue
                 
                 print(f"--- PARSED FULL CONTENT: {full_content} ---")
 
