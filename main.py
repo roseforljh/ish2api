@@ -1,4 +1,6 @@
-# main.py (v4.0.0 - Puter.js Format Adapter)
+# main.py (v4.1.0 - Debug Version)
+print("--- LOADING PROXY SERVER V4.1.0 (DEBUG VERSION) ---")
+print("--- FORMAT ADAPTER FOR PUTER.JS IS ACTIVE ---")
 
 import os
 import httpx
@@ -28,7 +30,7 @@ class OpenAIChatRequest(BaseModel):
 app = FastAPI(
     title="Multi-Provider OpenAI-Compatible Proxy",
     description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js格式转换器。",
-    version="4.0.0"
+    version="4.1.0"
 )
 
 # --- 提供商和目标地址映射 ---
@@ -79,7 +81,7 @@ async def stream_proxy(provider: str, request_body: dict):
             "method": "complete",
             "args": request_body
         }
-        print("Converted request body for Puter.js format.")
+        print("--- Converted request body for Puter.js format. ---")
 
     try:
         async with httpx.AsyncClient() as client:
