@@ -1,5 +1,6 @@
-# main.py (v5.1.0 - The Ultimate Debug)
-print("--- LOADING PROXY SERVER V5.1.0 (ULTIMATE DEBUG) ---")
+# main.py (v6.0.0 - The Grand Finale)
+print("--- LOADING PROXY SERVER V6.0.0 (GRAND FINALE) ---")
+print("--- PUTER.JS FULL EMULATION ADAPTER IS ACTIVE ---")
 
 import os
 import httpx
@@ -29,8 +30,8 @@ class OpenAIChatRequest(BaseModel):
 # --- FastAPI 应用实例 ---
 app = FastAPI(
     title="Multi-Provider OpenAI-Compatible Proxy",
-    description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js适配器。",
-    version="5.1.0"
+    description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js完全模拟适配器。",
+    version="6.0.0"
 )
 
 # --- 提供商配置 ---
@@ -50,14 +51,8 @@ COMMON_HEADERS = {
 
 # --- 核心代理函数 ---
 async def stream_proxy(provider: str, request_body: dict):
-    # --- 终极调试日志 ---
-    print(f"--- INSIDE STREAM_PROXY, RAW PROVIDER IS: '[{provider}]' ---")
-    provider = provider.strip()
-    print(f"--- STRIPPED PROVIDER IS: '[{provider}]' ---")
-
     target_url = PROVIDER_URLS.get(provider)
     if not target_url:
-        # ... (error handling)
         return
 
     request_headers = COMMON_HEADERS.copy()
@@ -65,25 +60,36 @@ async def stream_proxy(provider: str, request_body: dict):
     if api_key:
         request_headers['Authorization'] = f"Bearer {api_key}"
 
-    # --- Puter.js 特殊处理逻辑 ---
+    # --- Puter.js 完全模拟适配器 ---
     if provider == "puter":
+        # 1. 准备 Puter.js 特定的请求体
+        puter_args = request_body.copy()
+        puter_args["test_mode"] = False # 添加缺失的关键参数
+        
         final_request_body = {
             "interface": "puter-chatcompletion", "driver": "operadriver",
-            "method": "complete", "args": request_body
+            "method": "complete", "args": puter_args
         }
-        print("--- EXECUTING PUTER.JS (NON-STREAMING) LOGIC ---")
+        print("--- Converted request body for Puter.js (Full Emulation) ---")
         
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(target_url, json=final_request_body, headers=request_headers, timeout=120.0)
                 response.raise_for_status()
-                response_data = response.json()
-                print(f"--- Received non-streaming response from Puter: {response_data} ---")
+                
+                # 2. 解析 Puter.js 特定的响应格式
+                response_text = response.text
+                print(f"--- Received raw response from Puter: {response_text} ---")
+                
+                # 将包含多个JSON的字符串解析为Python列表
+                response_list = json.loads(response_text)
+                
+                # 拼接所有 text 类型的内容
+                full_content = "".join(item.get("text", "") for item in response_list if item.get("type") == "text")
 
-                # --- 手动模拟OpenAI流式响应 ---
+                # 3. 手动模拟OpenAI流式响应
                 chunk_id = f"chatcmpl-{''.join(str(time.time()).split('.'))}"
                 model_name = request_body.get("model")
-                full_content = response_data.get("content", "")
 
                 content_chunk = {
                     "id": chunk_id, "object": "chat.completion.chunk", "created": int(time.time()), "model": model_name,
@@ -99,20 +105,19 @@ async def stream_proxy(provider: str, request_body: dict):
                 yield "data: [DONE]\n\n".encode('utf-8')
                 return
         except Exception as e:
-            print(f"Error during Puter.js non-streaming request: {e}")
+            print(f"Error during Puter.js full emulation: {e}")
             return
-    else:
-        # --- 其他提供商的通用流式逻辑 ---
-        print(f"--- EXECUTING GENERIC (STREAMING) LOGIC FOR PROVIDER: {provider} ---")
-        final_request_body = request_body
-        try:
-            async with httpx.AsyncClient() as client:
-                async with client.stream("POST", target_url, json=final_request_body, headers=request_headers, timeout=120.0) as response:
-                    response.raise_for_status()
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
-        except Exception as e:
-            print(f"Error during streaming request for {provider}: {e}")
+    
+    # --- 其他提供商的通用流式逻辑 ---
+    final_request_body = request_body
+    try:
+        async with httpx.AsyncClient() as client:
+            async with client.stream("POST", target_url, json=final_request_body, headers=request_headers, timeout=120.0) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+    except Exception as e:
+        print(f"Error during streaming request for {provider}: {e}")
 
 # --- FastAPI 路由 ---
 @app.post("/{provider}/v1/chat/completions")
