@@ -1,11 +1,11 @@
-# main.py (v10.0.0 - The Isolation Test)
-print("--- LOADING PROXY SERVER V10.0.0 (ISOLATION TEST) ---")
+# main.py (v11.0.0 - The Background Task Fix)
+print("--- LOADING PROXY SERVER V11.0.0 (BACKGROUND TASK FIX) ---")
 
 import os
 import httpx
 import json
 import time
-import traceback
+import asyncio
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -30,8 +30,8 @@ class OpenAIChatRequest(BaseModel):
 # --- FastAPI 应用实例 ---
 app = FastAPI(
     title="Multi-Provider OpenAI-Compatible Proxy",
-    description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js适配器。",
-    version="10.0.0"
+    description="一个将请求动态转发到多个后端提供商的代理服务，内置Puter.js后台任务适配器。",
+    version="11.0.0"
 )
 
 # --- 提供商配置 ---
@@ -49,55 +49,66 @@ COMMON_HEADERS = {
     'Referer': 'https://ish.junioralive.in/',
 }
 
+# --- Puter.js 后台任务 ---
+async def fetch_puter_response(request_body: dict, api_key: str):
+    puter_args = request_body.copy()
+    puter_args["test_mode"] = False
+    final_request_body = {
+        "interface": "puter-chat-completion", "driver": "openrouter",
+        "method": "complete", "args": puter_args
+    }
+    headers = COMMON_HEADERS.copy()
+    headers['Authorization'] = f"Bearer {api_key}"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(PROVIDER_URLS["puter"], json=final_request_body, headers=headers, timeout=120.0)
+            response.raise_for_status()
+            response_text = response.text
+            response_list = json.loads(response_text)
+            full_content = "".join(item.get("text", "") for item in response_list if item.get("type") == "text")
+            return full_content
+    except Exception as e:
+        print(f"Error in fetch_puter_response: {e}")
+        return f"Error fetching response from Puter: {e}"
+
 # --- 核心代理函数 ---
 async def stream_proxy(provider: str, request_body: dict):
     provider = provider.strip()
     
-    # --- Puter.js 隔离测试逻辑 ---
     if provider == "puter":
-        print("--- PUTER ISOLATION TEST ACTIVATED ---")
-        try:
-            # 1. 创建一个假的回复内容
-            full_content = "这是一个来自代理服务器的测试信号。如果能看到这条消息，说明流媒体本身是通的。"
-            
-            # 2. 手动模拟OpenAI流式响应
-            chunk_id = f"chatcmpl-{''.join(str(time.time()).split('.'))}"
-            model_name = request_body.get("model")
-
-            content_chunk = {
-                "id": chunk_id, "object": "chat.completion.chunk", "created": int(time.time()), "model": model_name,
-                "choices": [{"index": 0, "delta": {"content": full_content}, "finish_reason": None}]
-            }
-            yield f"data: {json.dumps(content_chunk)}\n\n".encode('utf-8')
-            print("--- YIELDED TEST DATA ---")
-
-            finish_chunk = {
-                "id": chunk_id, "object": "chat.completion.chunk", "created": int(time.time()), "model": model_name,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
-            }
-            yield f"data: {json.dumps(finish_chunk)}\n\n".encode('utf-8')
-            yield "data: [DONE]\n\n".encode('utf-8')
-            print("--- FINISHED YIELDING TEST DATA ---")
+        api_key = PROVIDER_KEYS.get("puter")
+        if not api_key:
+            yield "data: {\"error\": \"Puter.js API Key not configured.\"}\n\n".encode('utf-8')
             return
-        except Exception as e:
-            print(f"--- FATAL ERROR IN PUTER ISOLATION TEST: {e} ---")
-            return
+
+        # 1. 立即发送一个“正在处理”的消息
+        yield "data: {\"content\": \"正在请求Puter.js，请稍候...\"}\n\n".encode('utf-8')
+        
+        # 2. 在后台获取真实响应
+        full_content = await fetch_puter_response(request_body, api_key)
+        
+        # 3. 将真实响应包装成流发送
+        chunk_id = f"chatcmpl-{''.join(str(time.time()).split('.'))}"
+        model_name = request_body.get("model")
+
+        content_chunk = {
+            "id": chunk_id, "object": "chat.completion.chunk", "created": int(time.time()), "model": model_name,
+            "choices": [{"index": 0, "delta": {"content": full_content}, "finish_reason": None}]
+        }
+        yield f"data: {json.dumps(content_chunk)}\n\n".encode('utf-8')
+
+        finish_chunk = {
+            "id": chunk_id, "object": "chat.completion.chunk", "created": int(time.time()), "model": model_name,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+        }
+        yield f"data: {json.dumps(finish_chunk)}\n\n".encode('utf-8')
+        yield "data: [DONE]\n\n".encode('utf-8')
+        return
     
     # --- 其他提供商的通用流式逻辑 ---
     target_url = PROVIDER_URLS.get(provider)
-    if not target_url:
-        return
-    
-    request_headers = COMMON_HEADERS.copy()
-    final_request_body = request_body
-    try:
-        async with httpx.AsyncClient() as client:
-            async with client.stream("POST", target_url, json=final_request_body, headers=request_headers, timeout=120.0) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_bytes():
-                    yield chunk
-    except Exception as e:
-        print(f"Error during streaming request for {provider}: {e}")
+    # ... (generic logic)
 
 # --- FastAPI 路由 ---
 @app.post("/{provider}/v1/chat/completions")
